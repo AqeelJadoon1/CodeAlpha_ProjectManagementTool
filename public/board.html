@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Board - Project Tool</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f5f7; }
+    header { background: #222; color: white; padding: 16px 24px; }
+    header a { color: white; text-decoration: none; }
+    .top { max-width: 1000px; margin: 20px auto 0; padding: 0 16px;
+           display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+    .members { font-size: 13px; color: #555; }
+    .members b { display: block; margin-bottom: 4px; }
+    .add-member { display: flex; gap: 6px; margin-top: 6px; }
+    .add-member input { padding: 4px; font-size: 13px; }
+    .add-member button, .new-task-btn { padding: 6px 12px; background: #222; color: white;
+      border: 0; border-radius: 4px; cursor: pointer; font-size: 13px; }
+
+    .board { display: flex; gap: 16px; max-width: 1000px; margin: 16px auto; padding: 0 16px; }
+    .column { background: #ebecf0; border-radius: 8px; padding: 12px; flex: 1; min-width: 0; }
+    .column h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; color: #555; }
+    .task { background: white; border-radius: 6px; padding: 10px; margin-bottom: 8px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1); cursor: pointer; }
+    .task .title { font-weight: bold; font-size: 14px; }
+    .task .assignees { font-size: 12px; color: #666; margin-top: 6px; }
+    .task .move-buttons { margin-top: 8px; display: flex; gap: 4px; }
+    .task .move-buttons button { font-size: 11px; padding: 3px 6px; cursor: pointer; }
+
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+                align-items: center; justify-content: center; }
+    .modal { background: white; border-radius: 8px; padding: 20px; width: 320px; max-width: 90vw; }
+    .modal input, .modal textarea { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0; }
+    .modal label { font-size: 13px; }
+    .modal .checks { max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 6px; margin: 6px 0; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+    .modal-actions button { padding: 6px 14px; border: 0; border-radius: 4px; cursor: pointer; }
+    .comments-box { margin-top: 10px; border-top: 1px solid #eee; padding-top: 8px;
+                    max-height: 120px; overflow-y: auto; }
+    .comment { font-size: 13px; margin-bottom: 4px; }
+
+    #toast { position: fixed; top: 16px; right: 16px; background: #222; color: white;
+         padding: 12px 18px; border-radius: 6px; font-size: 14px; opacity: 0;
+         transform: translateY(-10px); transition: opacity 0.3s, transform 0.3s; z-index: 999; }
+#toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+  <div id="toast"></div>
+  <header><a href="/"><h1>Project Tool</h1></a></header>
+
+  <div class="top">
+    <div class="members" id="members"></div>
+    <button class="new-task-btn" id="new-task-btn">+ New Task</button>
+  </div>
+
+  <div class="board">
+    <div class="column"><h3>To Do</h3><div id="col-todo"></div></div>
+    <div class="column"><h3>In Progress</h3><div id="col-in_progress"></div></div>
+    <div class="column"><h3>Done</h3><div id="col-done"></div></div>
+  </div>
+
+  <!-- New task modal -->
+  <div class="modal-bg" id="new-task-modal">
+    <div class="modal">
+      <h3>New Task</h3>
+      <input type="text" id="task-title" placeholder="Task title">
+      <textarea id="task-desc" rows="2" placeholder="Description"></textarea>
+      <label>Assign to:</label>
+      <div class="checks" id="assignee-checks"></div>
+      <div class="modal-actions">
+        <button id="cancel-task">Cancel</button>
+        <button id="save-task" style="background:#222; color:white;">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task detail modal -->
+  <div class="modal-bg" id="detail-modal">
+    <div class="modal">
+      <h3 id="detail-title"></h3>
+      <p id="detail-desc"></p>
+      <p id="detail-assignees" style="font-size:13px; color:#666;"></p>
+      <div class="comments-box" id="detail-comments"></div>
+      <div class="add-member" style="margin-top:8px;">
+        <input type="text" id="comment-input" placeholder="Add a comment..." style="flex:1;">
+        <button id="comment-send">Send</button>
+      </div>
+      <div class="modal-actions">
+        <button id="close-detail">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const projectId = new URLSearchParams(window.location.search).get('id');
+    let me = null;
+    let members = [];
+    let activeTaskId = null;
+
+   const socket = io();
+socket.emit('join-project', projectId);
+socket.on('board-updated', (data) => {
+  loadTasks();
+  if (data && data.message) showToast(data.message);
+});
+
+let toastTimer;
+function showToast(message) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    async function init() {
+      const meRes = await fetch('/api/me');
+      me = await meRes.json();
+      if (!me) { window.location.href = '/account.html'; return; }
+
+      await loadProject();
+      await loadTasks();
+    }
+
+    async function loadProject() {
+      const response = await fetch('/api/projects/' + projectId);
+      const project = await response.json();
+      members = project.members;
+
+      document.getElementById('members').innerHTML = `
+        <b>${escapeHtml(project.name)} — Members</b>
+        ${members.map(m => `${escapeHtml(m.name)} (${m.role})`).join(', ')}
+        ${project.myRole === 'owner' || project.myRole === 'admin' ? `
+          <div class="add-member">
+            <input type="email" id="add-email" placeholder="teammate@email.com">
+            <button id="add-member-btn">Add</button>
+          </div>` : ''}
+      `;
+
+      const addBtn = document.getElementById('add-member-btn');
+      if (addBtn) {
+        addBtn.onclick = async () => {
+          const email = document.getElementById('add-email').value;
+          const lookup = await fetch('/api/users/lookup?email=' + encodeURIComponent(email));
+          const user = await lookup.json();
+          if (!user) { alert('No user found with that email'); return; }
+
+          await fetch(`/api/projects/${projectId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id, role: 'member' })
+          });
+          loadProject();
+        };
+      }
+    }
+
+    async function loadTasks() {
+      const response = await fetch(`/api/projects/${projectId}/tasks`);
+      const tasks = await response.json();
+
+      ['todo', 'in_progress', 'done'].forEach(status => {
+        document.getElementById('col-' + status).innerHTML = '';
+      });
+
+      tasks.forEach(task => {
+        const el = document.createElement('div');
+        el.className = 'task';
+        el.innerHTML = `
+          <div class="title">${escapeHtml(task.title)}</div>
+          <div class="assignees">${task.assignees.map(a => a.name).join(', ') || 'Unassigned'} · 💬 ${task.comment_count}</div>
+          <div class="move-buttons"></div>
+        `;
+        el.querySelector('.title').onclick = () => openDetail(task);
+
+        const moveDiv = el.querySelector('.move-buttons');
+        ['todo', 'in_progress', 'done'].filter(s => s !== task.status).forEach(s => {
+          const btn = document.createElement('button');
+          btn.textContent = '→ ' + s.replace('_', ' ');
+          btn.onclick = async (e) => {
+            e.stopPropagation();
+            await fetch(`/api/tasks/${task.id}/status`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: s })
+            });
+            loadTasks();
+          };
+          moveDiv.appendChild(btn);
+        });
+
+        document.getElementById('col-' + task.status).appendChild(el);
+      });
+    }
+
+    // ---- New task modal ----
+    document.getElementById('new-task-btn').onclick = () => {
+      document.getElementById('task-title').value = '';
+      document.getElementById('task-desc').value = '';
+      document.getElementById('assignee-checks').innerHTML = members.map(m => `
+        <label style="display:block;">
+          <input type="checkbox" value="${m.id}"> ${escapeHtml(m.name)}
+        </label>`).join('');
+      document.getElementById('new-task-modal').style.display = 'flex';
+    };
+    document.getElementById('cancel-task').onclick = () => {
+      document.getElementById('new-task-modal').style.display = 'none';
+    };
+    document.getElementById('save-task').onclick = async () => {
+      const title = document.getElementById('task-title').value;
+      if (!title.trim()) return;
+      const description = document.getElementById('task-desc').value;
+      const assigneeIds = [...document.querySelectorAll('#assignee-checks input:checked')]
+        .map(cb => Number(cb.value));
+
+      await fetch(`/api/projects/${projectId}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, description, assigneeIds })
+      });
+      document.getElementById('new-task-modal').style.display = 'none';
+      loadTasks();
+    };
+
+    // ---- Task detail modal ----
+    async function openDetail(task) {
+      activeTaskId = task.id;
+      document.getElementById('detail-title').textContent = task.title;
+      document.getElementById('detail-desc').textContent = task.description || 'No description.';
+      document.getElementById('detail-assignees').textContent =
+        'Assigned to: ' + (task.assignees.map(a => a.name).join(', ') || 'Unassigned');
+      await loadComments();
+      document.getElementById('detail-modal').style.display = 'flex';
+    }
+
+    async function loadComments() {
+      const response = await fetch(`/api/tasks/${activeTaskId}/comments`);
+      const comments = await response.json();
+      document.getElementById('detail-comments').innerHTML = comments
+        .map(c => `<div class="comment"><b>${escapeHtml(c.author_name)}:</b> ${escapeHtml(c.content)}</div>`)
+        .join('') || '<p style="font-size:13px; color:#999;">No comments yet.</p>';
+    }
+
+    document.getElementById('comment-send').onclick = async () => {
+      const input = document.getElementById('comment-input');
+      if (!input.value.trim()) return;
+      await fetch(`/api/tasks/${activeTaskId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: input.value })
+      });
+      input.value = '';
+      loadComments();
+      loadTasks(); // refresh comment_count on the card behind the modal
+    };
+
+    document.getElementById('close-detail').onclick = () => {
+      document.getElementById('detail-modal').style.display = 'none';
+    };
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account - My Store</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f5f5; }
+    header { background: #222; color: white; padding: 16px 24px; }
+    header a { color: white; text-decoration: none; }
+    .wrap { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; justify-content: center; }
+    form { background: white; padding: 24px; border-radius: 8px; width: 280px; }
+    input { width: 100%; padding: 8px; margin: 6px 0 12px; box-sizing: border-box; }
+    button { width: 100%; padding: 10px; background: #222; color: white; border: 0;
+             border-radius: 4px; cursor: pointer; }
+    .error { color: #c0392b; min-height: 20px; }
+  </style>
+</head>
+<body>
+  <header><a href="/"><h1>My Store</h1></a></header>
+
+  <div class="wrap">
+    <form id="login-form">
+      <h2>Log in</h2>
+      <label>Email</label>
+      <input type="email" name="email" required>
+      <label>Password</label>
+      <input type="password" name="password" required>
+      <div class="error" id="login-error"></div>
+      <button type="submit">Log in</button>
+    </form>
+
+    <form id="register-form">
+      <h2>Create account</h2>
+      <label>Name</label>
+      <input type="text" name="name" required>
+      <label>Email</label>
+      <input type="email" name="email" required>
+      <label>Password (min 6 characters)</label>
+      <input type="password" name="password" required>
+      <div class="error" id="register-error"></div>
+      <button type="submit">Register</button>
+    </form>
+  </div>
+
+  <script>
+    // One helper that both forms use
+    async function sendForm(event, url, errorId) {
+      event.preventDefault(); // stop the browser's default page reload
+      const data = Object.fromEntries(new FormData(event.target));
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      const result = await response.json();
+
+      if (!response.ok) {
+        document.getElementById(errorId).textContent = result.error;
+      } else {
+        window.location.href = '/'; // success → go to the store
+      }
+    }
+
+    document.getElementById('login-form')
+      .addEventListener('submit', e => sendForm(e, '/api/login', 'login-error'));
+    document.getElementById('register-form')
+      .addEventListener('submit', e => sendForm(e, '/api/register', 'register-error'));
+  </script>
+</body>
+</html>
